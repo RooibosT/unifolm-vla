@@ -347,6 +347,24 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
     # single dataset
     "g1_stack_block":[
         ("g1_stack_block", 1.0),
-    ]
+    ],
+    "Unitree_Dex3_all_task": [
+        ("g1_dex3_block_stacking", 1.0),
+        ("g1_dex3_camera_packaging", 1.0),
+        ("g1_dex3_grasp_square", 1.0),
+        ("g1_dex3_object_placement", 1.0),
+        ("g1_dex3_pick_apple", 1.0),
+        ("g1_dex3_pick_bottle", 1.0),
+        ("g1_dex3_pick_charger", 1.0),
+        ("g1_dex3_pick_doll", 1.0),
+        ("g1_dex3_pick_gum", 1.0),
+        ("g1_dex3_pick_snack", 1.0),
+        ("g1_dex3_pick_tissue", 1.0),
+        ("g1_dex3_pouring", 1.0),
+        ("g1_dex3_toasted_bread", 1.0),
+    ],
+    "g1_dex3_block_stacking": [
+        ("g1_dex3_block_stacking", 1.0),
+    ],
 }
 # fmt: on

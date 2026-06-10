@@ -21,9 +21,43 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 
 class LeRobotDataProcessor:
-    def __init__(self, repo_id: str, root: str = None, image_dtype: str = "to_unit8") -> None:
+    DEX3_IMAGE_KEYS = [
+        "observation.images.cam_left_high",
+        "observation.images.cam_right_high",
+        "observation.images.cam_left_wrist",
+        "observation.images.cam_right_wrist",
+    ]
+
+    def __init__(self, repo_id: str, root: str = None, image_dtype: str = "to_unit8", mode: str = "g1") -> None:
         self.image_dtype = image_dtype
+        self.mode = mode
         self.dataset = LeRobotDataset(repo_id=repo_id, root=root, video_backend="pyav")
+
+    @staticmethod
+    def _to_numpy(value):
+        if hasattr(value, "detach"):
+            value = value.detach().cpu()
+        if hasattr(value, "numpy"):
+            value = value.numpy()
+        return np.asarray(value)
+
+    def _format_image(self, value):
+        value = self._to_numpy(value)
+        if value.ndim == 3 and value.shape[0] in (1, 3, 4):
+            value = np.transpose(value, (1, 2, 0))
+        if value.dtype != np.uint8:
+            if np.issubdtype(value.dtype, np.floating) and np.max(value) <= 1.0:
+                value = value * 255
+            value = np.clip(value, 0, 255).astype(np.uint8)
+
+        if self.image_dtype == "to_unit8":
+            return value
+        if self.image_dtype == "to_bytes":
+            success, encoded_img = cv2.imencode(".jpg", value, [cv2.IMWRITE_JPEG_QUALITY, 100])
+            if not success:
+                raise ValueError("Image encoding failed")
+            return np.void(encoded_img.tobytes())
+        raise ValueError(f"Unsupported image dtype: {self.image_dtype}")
 
     def process_episode(self, episode_index: int) -> dict:
         """Process a single episode to extract camera images, state, and action."""
@@ -32,12 +66,37 @@ class LeRobotDataProcessor:
 
         episode = defaultdict(list)
         cameras = defaultdict(list)
+        task = ""
 
         for step_idx in tqdm(
             range(from_idx, to_idx), desc=f"Episode {episode_index}", position=1, leave=False, dynamic_ncols=True
         ):
 
             step = self.dataset[step_idx]
+            if self.mode == "dex3":
+                image_dict = {
+                    key.split(".")[-1]: self._format_image(step[key])
+                    for key in self.DEX3_IMAGE_KEYS
+                    if key in step
+                }
+                missing = {key.split(".")[-1] for key in self.DEX3_IMAGE_KEYS} - set(image_dict)
+                if missing:
+                    raise KeyError(f"Episode {episode_index} step {step_idx} is missing Dex3 cameras: {sorted(missing)}")
+
+                for key, value in image_dict.items():
+                    cameras[key].append(value)
+
+                state = self._to_numpy(step["observation.state"]).astype(np.float32)
+                action = self._to_numpy(step["action"]).astype(np.float32)
+                if state.shape[-1] != 28 or action.shape[-1] != 28:
+                    raise ValueError(
+                        f"Dex3 expects 28D state/action, got state={state.shape}, action={action.shape}"
+                    )
+
+                episode["state"].append(state)
+                episode["action"].append(action)
+                task = step.get("task", task)
+                continue
 
             image_dict = {
                 key.split(".")[2]: np.transpose(
@@ -83,19 +142,29 @@ class LeRobotDataProcessor:
             episode['ee_action'].append(ee_action)
 
         episode["cameras"] = cameras
-        episode["task"] = step["task"]
+        episode["task"] = task if self.mode == "dex3" else step["task"]
         episode["episode_length"] = to_idx - from_idx
 
         # Data configuration for later use
-        episode["data_cfg"] = {
-            "camera_names": list(image_dict.keys()),
-            "cam_height": cam_height,
-            "cam_width": cam_width,
-            "state_dim": np.squeeze(state.shape),
-            "ee_state_dim": np.squeeze(ee_state.shape),
-            "action_dim": np.squeeze(action.shape),
-            "ee_action_dim": np.squeeze(ee_action.shape),
-        }
+        if self.mode == "dex3":
+            cam_height, cam_width = next(iter(cameras.values()))[0].shape[:2]
+            episode["data_cfg"] = {
+                "camera_names": list(cameras.keys()),
+                "cam_height": cam_height,
+                "cam_width": cam_width,
+                "state_dim": np.squeeze(np.asarray(episode["state"][0]).shape),
+                "action_dim": np.squeeze(np.asarray(episode["action"][0]).shape),
+            }
+        else:
+            episode["data_cfg"] = {
+                "camera_names": list(image_dict.keys()),
+                "cam_height": cam_height,
+                "cam_width": cam_width,
+                "state_dim": np.squeeze(state.shape),
+                "ee_state_dim": np.squeeze(ee_state.shape),
+                "action_dim": np.squeeze(action.shape),
+                "ee_action_dim": np.squeeze(ee_action.shape),
+            }
         episode["episode_index"] = episode_index
 
         return episode
@@ -113,8 +182,6 @@ class H5Writer:
         episode_index = episode["episode_index"]
         state = episode["state"]
         action = episode["action"]
-        ee_state = episode["ee_state"]
-        ee_action = episode["ee_action"]
         qvel = np.zeros_like(episode["state"])
         cameras = episode["cameras"]
         task = episode["task"]
@@ -123,12 +190,14 @@ class H5Writer:
         # Prepare data dictionary
         data_dict = {
             "/observations/qpos": [state],
-            "/observations/ee_qpos": [ee_state],
             "/observations/qvel": [qvel],
             "/action": [action],
-            "ee_action": [ee_action],
             **{f"/observations/images/{k}": [v] for k, v in cameras.items()},
         }
+        if "ee_state" in episode:
+            data_dict["/observations/ee_qpos"] = [episode["ee_state"]]
+        if "ee_action" in episode:
+            data_dict["ee_action"] = [episode["ee_action"]]
 
         h5_path = os.path.join(self.output_dir, f"episode_{episode_index}.hdf5")
 
@@ -153,10 +222,12 @@ class H5Writer:
 
             # Write state and action data
             obs.create_dataset("qpos", (episode_length, data_cfg["state_dim"]), dtype="float32", compression="gzip")
-            obs.create_dataset("ee_qpos", (episode_length, data_cfg["ee_state_dim"]), dtype="float32", compression="gzip")
             obs.create_dataset("qvel", (episode_length, data_cfg["state_dim"]), dtype="float32", compression="gzip")
             root.create_dataset("action", (episode_length, data_cfg["action_dim"]), dtype="float32", compression="gzip")
-            root.create_dataset("ee_action", (episode_length, data_cfg["ee_action_dim"]), dtype="float32", compression="gzip")
+            if "ee_state_dim" in data_cfg:
+                obs.create_dataset("ee_qpos", (episode_length, data_cfg["ee_state_dim"]), dtype="float32", compression="gzip")
+            if "ee_action_dim" in data_cfg:
+                root.create_dataset("ee_action", (episode_length, data_cfg["ee_action_dim"]), dtype="float32", compression="gzip")
             # Write metadata
             root.create_dataset("is_edited", (1,), dtype="uint8")
             substep_reasonings = root.create_dataset(
@@ -171,12 +242,12 @@ class H5Writer:
 
 
 
-def lerobot_to_h5(repo_id: str, output_dir: Path, root: str = None) -> None:
+def lerobot_to_h5(repo_id: str, output_dir: Path, root: str = None, mode: str = "g1") -> None:
     """Main function to process and write LeRobot data to HDF5 format."""
 
     # Initialize data processor and H5 writer
     data_processor = LeRobotDataProcessor(
-        repo_id, root, image_dtype="to_unit8"
+        repo_id, root, image_dtype="to_unit8", mode=mode
     )  # image_dtype Options: "to_unit8", "to_bytes"
     h5_writer = H5Writer(output_dir)
 
@@ -195,8 +266,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="")
     parser.add_argument("--target_path", type=str, default="")
+    parser.add_argument("--mode", choices=["g1", "dex3"], default="g1")
     args = parser.parse_args()
     repo_id = os.path.basename(args.data_path)
     root_path = args.data_path
     output_dir = args.target_path
-    lerobot_to_h5(repo_id, output_dir, root_path)
+    lerobot_to_h5(repo_id, output_dir, root_path, mode=args.mode)

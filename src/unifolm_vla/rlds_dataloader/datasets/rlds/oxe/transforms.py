@@ -857,6 +857,12 @@ def unitree_g1_joint_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, 
     return trajectory
 
 
+def unitree_g1_dex3_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    trajectory["observation"]["state"] = trajectory["observation"]["state"]
+    trajectory["action"] = trajectory["action"]
+    return trajectory
+
+
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
     "bridge_oxe": bridge_oxe_dataset_transform,
@@ -957,4 +963,17 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "g1_prepare_fruit": unitree_g1_ee_6d_dataset_transform,
     "g1_dual_clean_table": unitree_g1_ee_6d_dataset_transform,
     "g1_fold_towel": unitree_g1_ee_6d_dataset_transform,
+    "g1_dex3_block_stacking": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_camera_packaging": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_grasp_square": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_object_placement": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pick_apple": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pick_bottle": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pick_charger": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pick_doll": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pick_gum": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pick_snack": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pick_tissue": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_pouring": unitree_g1_dex3_dataset_transform,
+    "g1_dex3_toasted_bread": unitree_g1_dex3_dataset_transform,
 }

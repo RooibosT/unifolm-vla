@@ -74,6 +74,13 @@ G1_STACK_BLOCK_CONSTANTS = {
     "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
 }
 
+G1_DEX3_CONSTANTS = {
+    "NUM_ACTIONS_CHUNK": 25,
+    "ACTION_DIM": 28,
+    "PROPRIO_DIM": 28,
+    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS,
+}
+
 # Function to detect robot platform from command line arguments
 def detect_robot_platform():
     cmd_args = " ".join(sys.argv).lower()
@@ -86,6 +93,8 @@ def detect_robot_platform():
         return "BRIDGE"
     elif "fractal" in cmd_args:
         return "FRACTAL"
+    elif "dex3" in cmd_args:
+        return "G1_DEX3"
     elif "ee_6d" in cmd_args:
         return "G1_EE_6D"
     elif "joint" in cmd_args:
@@ -114,6 +123,8 @@ elif ROBOT_PLATFORM == "G1":
     constants = G1_CONSTANTS
 elif ROBOT_PLATFORM == "G1_STACK_BLOCK":
     constants = G1_STACK_BLOCK_CONSTANTS
+elif ROBOT_PLATFORM == "G1_DEX3":
+    constants = G1_DEX3_CONSTANTS
 
 
 # Assign constants to global variables

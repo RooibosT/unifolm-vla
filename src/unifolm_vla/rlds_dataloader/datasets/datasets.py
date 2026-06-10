@@ -20,6 +20,29 @@ from torch.utils.data import Dataset, IterableDataset
 from transformers import AutoProcessor, PreTrainedTokenizerBase
 from unifolm_vla.rlds_dataloader.constants import ACTION_PROPRIO_NORMALIZATION_TYPE, ACTION_DIM, NUM_ACTIONS_CHUNK, IGNORE_INDEX
 
+DEX3_DATASET_NAMES = {
+    "g1_dex3_block_stacking",
+    "g1_dex3_camera_packaging",
+    "g1_dex3_grasp_square",
+    "g1_dex3_object_placement",
+    "g1_dex3_pick_apple",
+    "g1_dex3_pick_bottle",
+    "g1_dex3_pick_charger",
+    "g1_dex3_pick_doll",
+    "g1_dex3_pick_gum",
+    "g1_dex3_pick_snack",
+    "g1_dex3_pick_tissue",
+    "g1_dex3_pouring",
+    "g1_dex3_toasted_bread",
+}
+
+
+def is_dex3_mix(data_mix: str) -> bool:
+    if data_mix == "Unitree_Dex3_all_task":
+        return True
+    return any(name in data_mix for name in DEX3_DATASET_NAMES)
+
+
 def tree_map(fn: Callable, tree: dict) -> dict:
     """Maps a function over a nested dictionary."""
     return {k: tree_map(fn, v) if isinstance(v, dict) else fn(v) for k, v in tree.items()}
@@ -35,11 +58,20 @@ class RLDSBatchTransform:
         dataset_name, actions = rlds_batch["dataset_name"].decode('utf-8'), rlds_batch["action"]
         window_size = rlds_batch["observation"]["image_primary"].shape[0]
         images = []
+        image_keys = ["image_primary"]
+        if dataset_name in DEX3_DATASET_NAMES:
+            image_keys = ["image_primary", "image_secondary"]
+            if self.use_wrist_image:
+                image_keys.extend(["image_left_wrist", "image_right_wrist"])
+
         for i in range(window_size):
-            images.append(Image.fromarray(rlds_batch["observation"]["image_primary"][i]))
+            for key in image_keys:
+                if key in rlds_batch["observation"]:
+                    images.append(Image.fromarray(rlds_batch["observation"][key][i]))
 
         text = rlds_batch["task"]["language_instruction"].decode().lower()  
 
+        proprio = None
         if self.use_proprio and "proprio" in rlds_batch["observation"]:
             proprio = rlds_batch["observation"]["proprio"]
             
@@ -104,7 +136,9 @@ class RLDSDataset(IterableDataset):
         else:
             mixture_spec = [(self.data_mix, 1.0)]
 
-        if "aloha" in self.data_mix:
+        if is_dex3_mix(self.data_mix):
+            load_camera_views = ("primary", "secondary", "left_wrist", "right_wrist")
+        elif "aloha" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
         elif "Unitree_all_task" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
@@ -200,6 +234,5 @@ class EpisodicRLDSDataset(RLDSDataset):
                 for i in range(rlds_batch["action"].shape[0])
             ]
             yield out
-
 
 

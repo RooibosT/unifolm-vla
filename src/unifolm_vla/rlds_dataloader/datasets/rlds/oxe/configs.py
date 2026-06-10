@@ -39,6 +39,7 @@ class StateEncoding(IntEnum):
     JOINT_BIMANUAL = 4      # Joint Angles (2 x [ Joint Angles (6) + Gripper Open/Close (1) ])
     JOINT_G1 = 5            # Joint Angles (2 x [ Joint Angles (7) + Gripper Open/Close (1) ] + Wrist roll-pitch-yaw (3)
     EE_R6_G1 = 6            # 2 x [EEF XYZ (3) + R6 (6) + Gripper Open/Close (1)] + Wrist roll-pitch-yaw (3)
+    JOINT_G1_DEX3 = 7       # 2 x [7D arm + dexterous hand joints] for G1 Dex3
     # fmt: on
 
 
@@ -51,6 +52,7 @@ class ActionEncoding(IntEnum):
     EEF_R6 = 4              # EEF Delta XYZ (3) + R6 (6) + Gripper Open/Close (1)
     JOINT_G1 = 5            # Joint Angles (2 x [ Joint Angles (7) + Gripper Open/Close (1) ] + Waist roll-pitch-yaw (3)
     EE_R6_G1 = 6            # 2 x [EEF XYZ (3) + R6 (6) + Gripper Open/Close (1)] + Waist roll-pitch-yaw (3)
+    JOINT_G1_DEX3 = 7       # 28D absolute joint target for G1 Dex3
     # fmt: on
 
 # === Individual Dataset Configs ===
@@ -139,6 +141,37 @@ OXE_DATASET_CONFIGS = {
         "state_obs_keys": ["state"],
         "state_encoding": StateEncoding.EE_R6_G1,
         "action_encoding": ActionEncoding.EE_R6_G1,
+    },
+
+    # === Unitree G1 Dex3 Fine-Tuning Datasets ===
+    **{
+        name: {
+            "image_obs_keys": {
+                "primary": "image_left_top",
+                "secondary": "image_right_top",
+                "left_wrist": "image_left_wrist",
+                "right_wrist": "image_right_wrist",
+            },
+            "depth_obs_keys": {"primary": None, "secondary": None, "left_wrist": None, "right_wrist": None},
+            "state_obs_keys": ["state"],
+            "state_encoding": StateEncoding.JOINT_G1_DEX3,
+            "action_encoding": ActionEncoding.JOINT_G1_DEX3,
+        }
+        for name in [
+            "g1_dex3_block_stacking",
+            "g1_dex3_camera_packaging",
+            "g1_dex3_grasp_square",
+            "g1_dex3_object_placement",
+            "g1_dex3_pick_apple",
+            "g1_dex3_pick_bottle",
+            "g1_dex3_pick_charger",
+            "g1_dex3_pick_doll",
+            "g1_dex3_pick_gum",
+            "g1_dex3_pick_snack",
+            "g1_dex3_pick_tissue",
+            "g1_dex3_pouring",
+            "g1_dex3_toasted_bread",
+        ]
     },
 
 
