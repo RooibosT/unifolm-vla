@@ -266,9 +266,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="")
     parser.add_argument("--target_path", type=str, default="")
+    parser.add_argument("--repo_id", type=str, default=None)
     parser.add_argument("--mode", choices=["g1", "dex3"], default="g1")
     args = parser.parse_args()
-    repo_id = os.path.basename(args.data_path)
+    repo_id = args.repo_id or os.path.basename(args.data_path)
     root_path = args.data_path
     output_dir = args.target_path
     lerobot_to_h5(repo_id, output_dir, root_path, mode=args.mode)
