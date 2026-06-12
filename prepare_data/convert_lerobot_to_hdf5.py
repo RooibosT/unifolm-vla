@@ -293,9 +293,18 @@ class LeRobotDataProcessor:
 
 
 class H5Writer:
-    def __init__(self, output_dir: Path) -> None:
+    def __init__(self, output_dir: Path, compression: str = "gzip", gzip_level: int = 1) -> None:
         self.output_dir = output_dir
+        self.compression = compression
+        self.gzip_level = gzip_level
         os.makedirs(output_dir, exist_ok=True)
+
+    def _compression_kwargs(self):
+        if self.compression == "none":
+            return {}
+        if self.compression == "gzip":
+            return {"compression": "gzip", "compression_opts": self.gzip_level}
+        return {"compression": self.compression}
 
     def write_to_h5(self, episode: dict) -> None:
         """Write episode data to HDF5 file."""
@@ -330,6 +339,7 @@ class H5Writer:
             # Create datasets
             obs = root.create_group("observations")
             image = obs.create_group("images")
+            compression_kwargs = self._compression_kwargs()
 
             # Write camera images
             for cam_name, images in cameras.items():
@@ -338,18 +348,18 @@ class H5Writer:
                     shape=(episode_length, data_cfg["cam_height"], data_cfg["cam_width"], 3),
                     dtype="uint8",
                     chunks=(1, data_cfg["cam_height"], data_cfg["cam_width"], 3),
-                    compression="gzip",
+                    **compression_kwargs,
                 )
                 # root[f'/observations/images/{cam_name}'][...] = images
 
             # Write state and action data
-            obs.create_dataset("qpos", (episode_length, data_cfg["state_dim"]), dtype="float32", compression="gzip")
-            obs.create_dataset("qvel", (episode_length, data_cfg["state_dim"]), dtype="float32", compression="gzip")
-            root.create_dataset("action", (episode_length, data_cfg["action_dim"]), dtype="float32", compression="gzip")
+            obs.create_dataset("qpos", (episode_length, data_cfg["state_dim"]), dtype="float32", **compression_kwargs)
+            obs.create_dataset("qvel", (episode_length, data_cfg["state_dim"]), dtype="float32", **compression_kwargs)
+            root.create_dataset("action", (episode_length, data_cfg["action_dim"]), dtype="float32", **compression_kwargs)
             if "ee_state_dim" in data_cfg:
-                obs.create_dataset("ee_qpos", (episode_length, data_cfg["ee_state_dim"]), dtype="float32", compression="gzip")
+                obs.create_dataset("ee_qpos", (episode_length, data_cfg["ee_state_dim"]), dtype="float32", **compression_kwargs)
             if "ee_action_dim" in data_cfg:
-                root.create_dataset("ee_action", (episode_length, data_cfg["ee_action_dim"]), dtype="float32", compression="gzip")
+                root.create_dataset("ee_action", (episode_length, data_cfg["ee_action_dim"]), dtype="float32", **compression_kwargs)
             # Write metadata
             root.create_dataset("is_edited", (1,), dtype="uint8")
             substep_reasonings = root.create_dataset(
@@ -373,6 +383,8 @@ def lerobot_to_h5(
     video_backend: str = "pyav",
     start_episode: int = 0,
     max_episodes: int | None = None,
+    hdf5_compression: str = "gzip",
+    gzip_level: int = 1,
 ) -> None:
     """Main function to process and write LeRobot data to HDF5 format."""
 
@@ -385,7 +397,7 @@ def lerobot_to_h5(
         tolerance_s=tolerance_s,
         video_backend=video_backend,
     )  # image_dtype Options: "to_unit8", "to_bytes"
-    h5_writer = H5Writer(output_dir)
+    h5_writer = H5Writer(output_dir, compression=hdf5_compression, gzip_level=gzip_level)
 
     # Process each episode
     end_episode = data_processor.num_episodes
@@ -411,10 +423,13 @@ if __name__ == "__main__":
     parser.add_argument("--video_backend", choices=["pyav", "video_reader", "torchcodec"], default=None)
     parser.add_argument("--start_episode", type=int, default=0)
     parser.add_argument("--max_episodes", type=int, default=None)
+    parser.add_argument("--hdf5_compression", choices=["gzip", "lzf", "none"], default=None)
+    parser.add_argument("--gzip_level", type=int, default=1)
     args = parser.parse_args()
     repo_id = args.repo_id or os.path.basename(args.data_path)
     tolerance_s = args.tolerance_s if args.tolerance_s is not None else (1000.0 if args.mode == "dex3" else 1e-4)
     video_backend = args.video_backend or "pyav"
+    hdf5_compression = args.hdf5_compression or ("lzf" if args.mode == "dex3" else "gzip")
     root_path = args.data_path
     output_dir = args.target_path
     lerobot_to_h5(
@@ -426,4 +441,6 @@ if __name__ == "__main__":
         video_backend=video_backend,
         start_episode=args.start_episode,
         max_episodes=args.max_episodes,
+        hdf5_compression=hdf5_compression,
+        gzip_level=args.gzip_level,
     )
