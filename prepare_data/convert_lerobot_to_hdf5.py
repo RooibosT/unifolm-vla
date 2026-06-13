@@ -69,6 +69,13 @@ class LeRobotDataProcessor:
 
         with open(info_path, "r") as f:
             self.dex3_info = json.load(f)
+        self.dex3_image_keys = [
+            key
+            for key in self.DEX3_IMAGE_KEYS
+            if key in self.dex3_info.get("features", {})
+        ]
+        if not self.dex3_image_keys:
+            raise ValueError(f"No Dex3 image features found in {info_path}")
 
         self.dex3_tasks = {}
         if tasks_jsonl_path.exists():
@@ -204,7 +211,7 @@ class LeRobotDataProcessor:
 
         episode_length = actions.shape[0]
         cameras = {}
-        for camera_key in self.DEX3_IMAGE_KEYS:
+        for camera_key in self.dex3_image_keys:
             camera_name = camera_key.split(".")[-1]
             video_path, from_timestamp, to_timestamp = self._dex3_video_spec(camera_key, episode_index)
             frames = self._decode_video_rgb(
@@ -260,10 +267,10 @@ class LeRobotDataProcessor:
             if self.mode == "dex3":
                 image_dict = {
                     key.split(".")[-1]: self._format_image(step[key])
-                    for key in self.DEX3_IMAGE_KEYS
+                    for key in self.dex3_image_keys
                     if key in step
                 }
-                missing = {key.split(".")[-1] for key in self.DEX3_IMAGE_KEYS} - set(image_dict)
+                missing = {key.split(".")[-1] for key in self.dex3_image_keys} - set(image_dict)
                 if missing:
                     raise KeyError(f"Episode {episode_index} step {step_idx} is missing Dex3 cameras: {sorted(missing)}")
 

@@ -29,6 +29,12 @@ def _read_language(raw_dataset):
     return str(raw_value)
 
 
+def _read_camera_or_zeros(images_group, camera_name: str, reference_images):
+    if camera_name in images_group:
+        return images_group[camera_name][:]
+    return np.zeros_like(reference_images)
+
+
 def batch_pose17_to_pose23(actions):
     """
     actions: (T, 17)
@@ -89,10 +95,11 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
             if not is_dex3_episode and "ee_action" in F:
                 ee_actions = F["ee_action"][:]
                 ee_actions_6d = batch_pose17_to_pose23(ee_actions)
-            images_left_top = F['observations']["images"]["cam_left_high"][:]  
-            images_right_top = F['observations']["images"]["cam_right_high"][:]  
-            images_left_wrist = F['observations']["images"]["cam_left_wrist"][:]  
-            images_right_wrist = F['observations']["images"]["cam_right_wrist"][:]  
+            images_group = F['observations']["images"]
+            images_left_top = images_group["cam_left_high"][:]
+            images_right_top = images_group["cam_right_high"][:]
+            images_left_wrist = _read_camera_or_zeros(images_group, "cam_left_wrist", images_left_top)
+            images_right_wrist = _read_camera_or_zeros(images_group, "cam_right_wrist", images_right_top)
             
             language_instruction = _read_language(F['language_raw'])
 

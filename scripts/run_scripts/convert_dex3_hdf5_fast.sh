@@ -76,6 +76,7 @@ for item in "${DATASETS[@]}"; do
   shard_size=$(( (episode_count + DEX3_SHARDS - 1) / DEX3_SHARDS ))
   echo "Converting $dataset_name: episodes=$episode_count existing=$hdf5_count shards=$DEX3_SHARDS compression=$DEX3_COMPRESSION"
 
+  pids=()
   for (( shard=0; shard<DEX3_SHARDS; shard++ )); do
     start=$(( shard * shard_size ))
     if (( start >= episode_count )); then
@@ -96,11 +97,31 @@ for item in "${DATASETS[@]}"; do
         --max_episodes "$max_episodes" \
         --hdf5_compression "$DEX3_COMPRESSION" \
         > "$log_path" 2>&1 &
+      pids+=("$!")
     fi
   done
 
   if [[ "$DEX3_DRY_RUN" != "1" ]]; then
-    wait
+    failures=0
+    for pid in "${pids[@]}"; do
+      if ! wait "$pid"; then
+        failures=$((failures + 1))
+      fi
+    done
+    if (( failures > 0 )); then
+      echo "Failed $dataset_name: $failures shard(s) failed. Check logs under $log_dir" >&2
+      exit 1
+    fi
   fi
-  echo "Finished $dataset_name: $(count_hdf5 "$output_dir" | tr -d " ")/$episode_count HDF5 files"
+  final_count=$(count_hdf5 "$output_dir" | tr -d " ")
+  if [[ "$DEX3_DRY_RUN" == "1" ]]; then
+    echo "Planned $dataset_name: current=$final_count/$episode_count HDF5 files"
+    continue
+  fi
+
+  echo "Finished $dataset_name: $final_count/$episode_count HDF5 files"
+  if (( final_count < episode_count )); then
+    echo "Failed $dataset_name: expected $episode_count HDF5 files, found $final_count" >&2
+    exit 1
+  fi
 done
