@@ -39,9 +39,11 @@ class LeRobotDataProcessor:
         mode: str = "g1",
         tolerance_s: float = 1e-4,
         video_backend: str = "pyav",
+        max_video_pad_frames: int = 0,
     ) -> None:
         self.image_dtype = image_dtype
         self.mode = mode
+        self.max_video_pad_frames = max_video_pad_frames
         self.root = Path(root) if root is not None else None
         if self.mode == "dex3":
             self._load_dex3_local_dataset()
@@ -185,16 +187,20 @@ class LeRobotDataProcessor:
                     backward=True,
                     stream=stream,
                 )
-            for frame in container.decode(stream):
-                if from_timestamp is not None and frame.pts is not None:
-                    timestamp = float(frame.pts * stream.time_base)
-                    if timestamp + 1e-6 < from_timestamp:
-                        continue
-                    if to_timestamp is not None and timestamp >= to_timestamp - 1e-6:
+            try:
+                for frame in container.decode(stream):
+                    if from_timestamp is not None and frame.pts is not None:
+                        timestamp = float(frame.pts * stream.time_base)
+                        if timestamp + 1e-6 < from_timestamp:
+                            continue
+                        if to_timestamp is not None and timestamp >= to_timestamp - 1e-6:
+                            break
+                    frames.append(frame.to_ndarray(format="rgb24"))
+                    if max_frames is not None and len(frames) >= max_frames:
                         break
-                frames.append(frame.to_ndarray(format="rgb24"))
-                if max_frames is not None and len(frames) >= max_frames:
-                    break
+            except av.error.FFmpegError:
+                if not frames:
+                    raise
         if not frames:
             raise ValueError(f"No frames decoded from {video_path}")
         return frames
@@ -221,10 +227,17 @@ class LeRobotDataProcessor:
                 max_frames=episode_length,
             )
             if len(frames) < episode_length:
-                raise ValueError(
-                    f"Video {camera_key} episode {episode_index} has {len(frames)} frames, "
-                    f"but parquet has {episode_length} rows"
+                deficit = episode_length - len(frames)
+                if deficit > self.max_video_pad_frames:
+                    raise ValueError(
+                        f"Video {camera_key} episode {episode_index} has {len(frames)} frames, "
+                        f"but parquet has {episode_length} rows"
+                    )
+                print(
+                    f"Warning: padding {deficit} missing frame(s) for {camera_key} episode {episode_index}",
+                    flush=True,
                 )
+                frames.extend([frames[-1]] * deficit)
             cameras[camera_name] = np.asarray(frames[:episode_length], dtype=np.uint8)
 
         task_index = int(rows["task_index"].iloc[0])
@@ -454,6 +467,7 @@ def lerobot_to_h5(
     max_episodes: int | None = None,
     hdf5_compression: str = "gzip",
     gzip_level: int = 1,
+    max_video_pad_frames: int = 0,
 ) -> None:
     """Main function to process and write LeRobot data to HDF5 format."""
 
@@ -465,6 +479,7 @@ def lerobot_to_h5(
         mode=mode,
         tolerance_s=tolerance_s,
         video_backend=video_backend,
+        max_video_pad_frames=max_video_pad_frames,
     )  # image_dtype Options: "to_unit8", "to_bytes"
     h5_writer = H5Writer(output_dir, compression=hdf5_compression, gzip_level=gzip_level)
 
@@ -494,11 +509,15 @@ if __name__ == "__main__":
     parser.add_argument("--max_episodes", type=int, default=None)
     parser.add_argument("--hdf5_compression", choices=["gzip", "lzf", "none"], default=None)
     parser.add_argument("--gzip_level", type=int, default=1)
+    parser.add_argument("--max_video_pad_frames", type=int, default=None)
     args = parser.parse_args()
     repo_id = args.repo_id or os.path.basename(args.data_path)
     tolerance_s = args.tolerance_s if args.tolerance_s is not None else (1000.0 if args.mode == "dex3" else 1e-4)
     video_backend = args.video_backend or "pyav"
     hdf5_compression = args.hdf5_compression or ("lzf" if args.mode == "dex3" else "gzip")
+    max_video_pad_frames = args.max_video_pad_frames
+    if max_video_pad_frames is None:
+        max_video_pad_frames = 30 if args.mode == "dex3" else 0
     root_path = args.data_path
     output_dir = args.target_path
     lerobot_to_h5(
@@ -512,4 +531,5 @@ if __name__ == "__main__":
         max_episodes=args.max_episodes,
         hdf5_compression=hdf5_compression,
         gzip_level=args.gzip_level,
+        max_video_pad_frames=max_video_pad_frames,
     )

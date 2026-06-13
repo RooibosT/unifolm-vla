@@ -6,6 +6,7 @@ DEX3_HDF5=${DEX3_HDF5:-/NHNHOME/WORKSPACE/chan/datasets/dex3_hdf5}
 DEX3_SHARDS=${DEX3_SHARDS:-4}
 DEX3_COMPRESSION=${DEX3_COMPRESSION:-lzf}
 DEX3_DRY_RUN=${DEX3_DRY_RUN:-0}
+DEX3_MAX_VIDEO_PAD_FRAMES=${DEX3_MAX_VIDEO_PAD_FRAMES:-30}
 
 declare -a DATASETS=(
   "g1_dex3_block_stacking|unitreerobotics/G1_Dex3_BlockStacking_Dataset|G1_Dex3_BlockStacking_Dataset"
@@ -74,7 +75,7 @@ for item in "${DATASETS[@]}"; do
   fi
 
   shard_size=$(( (episode_count + DEX3_SHARDS - 1) / DEX3_SHARDS ))
-  echo "Converting $dataset_name: episodes=$episode_count existing=$hdf5_count shards=$DEX3_SHARDS compression=$DEX3_COMPRESSION"
+  echo "Converting $dataset_name: episodes=$episode_count existing=$hdf5_count shards=$DEX3_SHARDS compression=$DEX3_COMPRESSION max_video_pad_frames=$DEX3_MAX_VIDEO_PAD_FRAMES"
 
   pids=()
   for (( shard=0; shard<DEX3_SHARDS; shard++ )); do
@@ -96,6 +97,7 @@ for item in "${DATASETS[@]}"; do
         --start_episode "$start" \
         --max_episodes "$max_episodes" \
         --hdf5_compression "$DEX3_COMPRESSION" \
+        --max_video_pad_frames "$DEX3_MAX_VIDEO_PAD_FRAMES" \
         > "$log_path" 2>&1 &
       pids+=("$!")
     fi
