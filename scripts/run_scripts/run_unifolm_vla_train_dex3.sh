@@ -24,6 +24,8 @@ num_processes=${num_processes:-1}
 per_device_batch_size=${per_device_batch_size:-2}
 max_train_steps=${max_train_steps:-20000}
 gradient_accumulation_steps=${gradient_accumulation_steps:-1}
+use_wrist_image=${use_wrist_image:-False}
+use_proprio=${use_proprio:-True}
 
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}
@@ -50,8 +52,8 @@ accelerate launch \
   --trainer.gradient_accumulation_steps ${gradient_accumulation_steps} \
   --trainer.shuffle_buffer_size 10000 \
   --trainer.save_interval 5000 \
-  --trainer.use_wrist_image True \
-  --trainer.use_proprio True \
+  --trainer.use_wrist_image ${use_wrist_image} \
+  --trainer.use_proprio ${use_proprio} \
   --trainer.logging_frequency 100 \
   --trainer.eval_interval 500 \
   --trainer.learning_rate.base 1e-5 \
