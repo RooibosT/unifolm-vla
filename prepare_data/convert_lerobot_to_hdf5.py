@@ -60,26 +60,46 @@ class LeRobotDataProcessor:
             raise ValueError("Dex3 conversion requires --data_path pointing to a local LeRobot dataset.")
 
         info_path = self.root / "meta" / "info.json"
-        episodes_path = self.root / "meta" / "episodes.jsonl"
-        tasks_path = self.root / "meta" / "tasks.jsonl"
-        if not info_path.exists() or not episodes_path.exists() or not tasks_path.exists():
-            raise FileNotFoundError(f"Missing Dex3 metadata under {self.root / 'meta'}")
+        episodes_jsonl_path = self.root / "meta" / "episodes.jsonl"
+        tasks_jsonl_path = self.root / "meta" / "tasks.jsonl"
+        episodes_parquet_paths = sorted((self.root / "meta" / "episodes").glob("**/*.parquet"))
+        tasks_parquet_path = self.root / "meta" / "tasks.parquet"
+        if not info_path.exists():
+            raise FileNotFoundError(f"Missing Dex3 info metadata: {info_path}")
 
         with open(info_path, "r") as f:
             self.dex3_info = json.load(f)
 
         self.dex3_tasks = {}
-        with open(tasks_path, "r") as f:
-            for line in f:
-                if line.strip():
-                    item = json.loads(line)
-                    self.dex3_tasks[int(item["task_index"])] = item["task"]
+        if tasks_jsonl_path.exists():
+            with open(tasks_jsonl_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        item = json.loads(line)
+                        self.dex3_tasks[int(item["task_index"])] = item["task"]
+        elif tasks_parquet_path.exists():
+            tasks_df = pd.read_parquet(tasks_parquet_path)
+            for task, row in tasks_df.iterrows():
+                self.dex3_tasks[int(row["task_index"])] = str(task)
+        else:
+            raise FileNotFoundError(f"Missing Dex3 task metadata under {self.root / 'meta'}")
 
-        self.dex3_episodes = []
-        with open(episodes_path, "r") as f:
-            for line in f:
-                if line.strip():
-                    self.dex3_episodes.append(json.loads(line))
+        if episodes_jsonl_path.exists():
+            self.dex3_episodes = []
+            with open(episodes_jsonl_path, "r") as f:
+                for line in f:
+                    if line.strip():
+                        self.dex3_episodes.append(json.loads(line))
+        elif episodes_parquet_paths:
+            episodes_df = pd.concat((pd.read_parquet(path) for path in episodes_parquet_paths), ignore_index=True)
+            self.dex3_episodes = episodes_df.sort_values("episode_index").to_dict("records")
+        else:
+            raise FileNotFoundError(f"Missing Dex3 episode metadata under {self.root / 'meta'}")
+
+        self.dex3_episode_meta = {
+            int(episode["episode_index"]): episode
+            for episode in self.dex3_episodes
+        }
         self.num_episodes = len(self.dex3_episodes)
 
         parquet_paths = sorted((self.root / "data").glob("**/episode_*.parquet"))
@@ -119,19 +139,55 @@ class LeRobotDataProcessor:
             return np.void(encoded_img.tobytes())
         raise ValueError(f"Unsupported image dtype: {self.image_dtype}")
 
-    def _dex3_video_path(self, camera_key: str, episode_index: int) -> Path:
+    def _dex3_video_spec(self, camera_key: str, episode_index: int) -> tuple[Path, float | None, float | None]:
+        episode_meta = self.dex3_episode_meta.get(episode_index, {})
         chunk_size = int(self.dex3_info.get("chunks_size", 1000))
         chunk_idx = episode_index // chunk_size
-        path = self.root / "videos" / f"chunk-{chunk_idx:03d}" / camera_key / f"episode_{episode_index:06d}.mp4"
-        if not path.exists():
-            raise FileNotFoundError(f"Missing Dex3 video file: {path}")
-        return path
+        old_path = self.root / "videos" / f"chunk-{chunk_idx:03d}" / camera_key / f"episode_{episode_index:06d}.mp4"
+        if old_path.exists():
+            return old_path, None, None
 
-    def _decode_video_rgb(self, video_path: Path) -> list[np.ndarray]:
+        chunk_col = f"videos/{camera_key}/chunk_index"
+        file_col = f"videos/{camera_key}/file_index"
+        from_col = f"videos/{camera_key}/from_timestamp"
+        to_col = f"videos/{camera_key}/to_timestamp"
+        if chunk_col in episode_meta and file_col in episode_meta:
+            video_chunk = int(episode_meta[chunk_col])
+            video_file = int(episode_meta[file_col])
+            path = self.root / "videos" / camera_key / f"chunk-{video_chunk:03d}" / f"file-{video_file:03d}.mp4"
+            if not path.exists():
+                raise FileNotFoundError(f"Missing Dex3 video file: {path}")
+            return path, float(episode_meta[from_col]), float(episode_meta[to_col])
+
+        raise FileNotFoundError(f"Missing Dex3 video metadata for {camera_key} episode {episode_index}")
+
+    def _decode_video_rgb(
+        self,
+        video_path: Path,
+        from_timestamp: float | None = None,
+        to_timestamp: float | None = None,
+        max_frames: int | None = None,
+    ) -> list[np.ndarray]:
         frames = []
         with av.open(str(video_path)) as container:
-            for frame in container.decode(video=0):
+            stream = container.streams.video[0]
+            if from_timestamp is not None:
+                container.seek(
+                    int(from_timestamp / float(stream.time_base)),
+                    any_frame=False,
+                    backward=True,
+                    stream=stream,
+                )
+            for frame in container.decode(stream):
+                if from_timestamp is not None and frame.pts is not None:
+                    timestamp = float(frame.pts * stream.time_base)
+                    if timestamp + 1e-6 < from_timestamp:
+                        continue
+                    if to_timestamp is not None and timestamp >= to_timestamp - 1e-6:
+                        break
                 frames.append(frame.to_ndarray(format="rgb24"))
+                if max_frames is not None and len(frames) >= max_frames:
+                    break
         if not frames:
             raise ValueError(f"No frames decoded from {video_path}")
         return frames
@@ -150,7 +206,13 @@ class LeRobotDataProcessor:
         cameras = {}
         for camera_key in self.DEX3_IMAGE_KEYS:
             camera_name = camera_key.split(".")[-1]
-            frames = self._decode_video_rgb(self._dex3_video_path(camera_key, episode_index))
+            video_path, from_timestamp, to_timestamp = self._dex3_video_spec(camera_key, episode_index)
+            frames = self._decode_video_rgb(
+                video_path,
+                from_timestamp=from_timestamp,
+                to_timestamp=to_timestamp,
+                max_frames=episode_length,
+            )
             if len(frames) < episode_length:
                 raise ValueError(
                     f"Video {camera_key} episode {episode_index} has {len(frames)} frames, "
