@@ -198,6 +198,8 @@ class VLATrainer(TrainerUtils):
         )
         self.model = self.freeze_backbones(self.model, freeze_modules=freeze_modules)
 
+        self.optimizer, self.lr_scheduler = setup_optimizer_and_scheduler(model=self.model, cfg=self.config)
+
         self.print_trainable_parameters(self.model)
 
         # initialize distributed training components
@@ -444,17 +446,14 @@ def main(cfg) -> None:
     # prepare data
     vla_train_dataloader = prepare_data(cfg=cfg, accelerator=accelerator, processor=processor)
 
-    # set optimizer and scheduler
-    optimizer, lr_scheduler = setup_optimizer_and_scheduler(model=vla, cfg=cfg)
-
     # create trainer
     # Run VLA Training
     trainer = VLATrainer(
         cfg=cfg,
         model=vla,
         vla_train_dataloader=vla_train_dataloader,
-        optimizer=optimizer,
-        lr_scheduler=lr_scheduler,
+        optimizer=None,
+        lr_scheduler=None,
         accelerator=accelerator,
     )
 
@@ -482,4 +481,3 @@ if __name__ == "__main__":
 
 
     main(cfg)
-

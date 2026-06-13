@@ -75,16 +75,21 @@ def build_param_lr_groups(model, cfg):
         try:
             for attr in module_name.split("."):
                 module = getattr(module, attr)
-            params = list(module.parameters())
+            params = [p for p in module.parameters() if p.requires_grad]
+            if not params:
+                continue
             param_groups.append({"params": params, "lr": lr, "name": module_name})
             used_params.update(id(p) for p in params)
         except AttributeError:
             ReferenceError(f"⚠️ module path `{module_name}` not found in vla")
 
     # assign base learning rate to the remaining unused parameters
-    other_params = [p for p in model.parameters() if id(p) not in used_params]
+    other_params = [p for p in model.parameters() if p.requires_grad and id(p) not in used_params]
     if other_params:
         param_groups.append({"params": other_params, "lr": base_lr, "name": "base"})
+
+    if not param_groups:
+        raise ValueError("No trainable parameters found when building optimizer parameter groups.")
 
     return param_groups
 

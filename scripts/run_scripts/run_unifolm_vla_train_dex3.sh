@@ -1,8 +1,16 @@
-export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-bond0}
-export NCCL_IB_HCA=${NCCL_IB_HCA:-mlx5_2,mlx5_3}
-export NCCL_BLOCKING_WAIT=1
-export NCCL_ASYNC_ERROR_HANDLING=1
-export NCCL_TIMEOUT=1000
+if [ -z "${NCCL_SOCKET_IFNAME:-}" ]; then
+  if ip link show eth0 >/dev/null 2>&1; then
+    export NCCL_SOCKET_IFNAME=eth0
+  elif ip link show ib0 >/dev/null 2>&1; then
+    export NCCL_SOCKET_IFNAME=ib0
+  else
+    export NCCL_SOCKET_IFNAME=lo
+  fi
+fi
+
+export TORCH_NCCL_BLOCKING_WAIT=${TORCH_NCCL_BLOCKING_WAIT:-1}
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}
+export NCCL_TIMEOUT=${NCCL_TIMEOUT:-1000}
 
 # Build Dex3 RLDS datasets with:
 #   UNIFOLM_RLDS_SCHEMA=dex3 \
