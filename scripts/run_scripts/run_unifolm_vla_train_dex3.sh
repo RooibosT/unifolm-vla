@@ -42,6 +42,7 @@ logging_frequency=${logging_frequency:-100}
 num_warmup_steps=${num_warmup_steps:-1000}
 base_learning_rate=${base_learning_rate:-1e-5}
 action_model_learning_rate=${action_model_learning_rate:-1e-4}
+save_final_model=${save_final_model:-True}
 
 if [ "${gradient_accumulation_steps}" -ne 1 ]; then
   echo "gradient_accumulation_steps must be 1 with the current Accelerate + DeepSpeed ZeRO-2 training loop."
@@ -83,6 +84,7 @@ accelerate launch \
   --trainer.num_warmup_steps ${num_warmup_steps} \
   --trainer.learning_rate.base ${base_learning_rate} \
   --trainer.learning_rate.action_model ${action_model_learning_rate} \
+  --trainer.save_final_model ${save_final_model} \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project ${wandb_project:-vla_dex3} \

@@ -423,12 +423,15 @@ class VLATrainer(TrainerUtils):
     def _finalize_training(self):
         """training end processing"""
         # save final model
-        if self.accelerator.is_main_process:
+        save_final_model = self.config.trainer.get("save_final_model", True)
+        if self.accelerator.is_main_process and save_final_model:
             final_checkpoint = os.path.join(self.config.output_dir, "final_model")
             os.makedirs(final_checkpoint, exist_ok=True)
             state_dict = self.accelerator.get_state_dict(self.model)
             torch.save(state_dict, os.path.join(final_checkpoint, "pytorch_model.pt"))
             logger.info(f"Training complete. Final model saved at {final_checkpoint}")
+        elif self.accelerator.is_main_process:
+            logger.info("Training complete. Final model save skipped.")
 
         # close W&B
         if self.accelerator.is_main_process:
