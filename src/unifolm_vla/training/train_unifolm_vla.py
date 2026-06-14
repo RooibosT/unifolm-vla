@@ -474,6 +474,16 @@ def main(cfg) -> None:
     dist.destroy_process_group()
 
 
+def suppress_tensorflow_shutdown_warning():
+    """Avoid TensorFlow 2.15 AtomicFunction destructor errors during interpreter shutdown."""
+    try:
+        from tensorflow.python.eager.polymorphic_function import atomic_function
+
+        atomic_function.AtomicFunction.__del__ = lambda self: None
+    except (ImportError, AttributeError):
+        pass
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_yaml", type=str, default="/jfs/jiang/code/unitree/Unifolm-VLA/src/unifolm_vla/config/training/unifolm_vla_train.yaml", help="Path to YAML config")
@@ -486,4 +496,7 @@ if __name__ == "__main__":
     cfg = OmegaConf.merge(cfg, cli_cfg)
 
 
-    main(cfg)
+    try:
+        main(cfg)
+    finally:
+        suppress_tensorflow_shutdown_warning()
