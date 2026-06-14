@@ -80,12 +80,15 @@ def collate_fn(inputs, processor):
     
     if "proprio" in inputs[0] and inputs[0]["proprio"] is not None:
         proprio = [example["proprio"] for example in inputs]
-        proprio = torch.Tensor(np.squeeze(np.stack(proprio)))
+        proprio = np.stack(proprio)
+        if proprio.ndim == 3 and proprio.shape[1] == 1:
+            proprio = np.squeeze(proprio, axis=1)
+        proprio = torch.Tensor(proprio)
     else:
         proprio = None
         
     actions = [example["actions"] for example in inputs]
-    actions = torch.Tensor(np.squeeze(np.stack(actions)))
+    actions = torch.Tensor(np.stack(actions))
     
     batch_input['action'] = actions
     batch_input['state'] = proprio
@@ -330,16 +333,16 @@ class VLATrainer(TrainerUtils):
                 progress_bar.update(1)
                 self.completed_steps += 1
 
-            # evaluate model
-            if self.completed_steps % self.config.trainer.eval_interval == 0:
-                step_metrics = self.eval_action_model(step_metrics)
+                # evaluate model
+                if self.completed_steps % self.config.trainer.eval_interval == 0:
+                    step_metrics = self.eval_action_model(step_metrics)
 
-            # record metrics
-            self._log_metrics(step_metrics)
+                # record metrics
+                self._log_metrics(step_metrics)
 
-            # save checkpoint
-            if self.completed_steps % self.config.trainer.save_interval == 0 and self.completed_steps > 0:
-                self._save_checkpoint()
+                # save checkpoint
+                if self.completed_steps % self.config.trainer.save_interval == 0:
+                    self._save_checkpoint()
 
             # check termination condition
             if self.completed_steps >= self.config.trainer.max_train_steps:

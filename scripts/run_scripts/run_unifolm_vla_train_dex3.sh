@@ -32,8 +32,22 @@ num_processes=${num_processes:-1}
 per_device_batch_size=${per_device_batch_size:-2}
 max_train_steps=${max_train_steps:-20000}
 gradient_accumulation_steps=${gradient_accumulation_steps:-1}
+mixed_precision=${mixed_precision:-bf16}
 use_wrist_image=${use_wrist_image:-False}
 use_proprio=${use_proprio:-True}
+shuffle_buffer_size=${shuffle_buffer_size:-10000}
+save_interval=${save_interval:-5000}
+eval_interval=${eval_interval:-500}
+logging_frequency=${logging_frequency:-100}
+num_warmup_steps=${num_warmup_steps:-1000}
+base_learning_rate=${base_learning_rate:-1e-5}
+action_model_learning_rate=${action_model_learning_rate:-1e-4}
+
+if [ "${gradient_accumulation_steps}" -ne 1 ]; then
+  echo "gradient_accumulation_steps must be 1 with the current Accelerate + DeepSpeed ZeRO-2 training loop."
+  echo "Increase per_device_batch_size or num_processes to raise the global batch size."
+  exit 2
+fi
 
 output_dir=${run_root_dir}/${run_id}
 mkdir -p ${output_dir}
@@ -42,6 +56,8 @@ cp $0 ${output_dir}/
 accelerate launch \
   --config_file src/unifolm_vla/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes ${num_processes} \
+  --mixed_precision ${mixed_precision} \
+  --gradient_accumulation_steps ${gradient_accumulation_steps} \
   src/unifolm_vla/training/train_unifolm_vla.py \
   --config_yaml ./src/unifolm_vla/config/training/unifolm_vla_train.yaml \
   --framework.framework_py ${Framework_name} \
@@ -58,14 +74,15 @@ accelerate launch \
   --trainer.freeze_modules ${freeze_module_list} \
   --trainer.max_train_steps ${max_train_steps} \
   --trainer.gradient_accumulation_steps ${gradient_accumulation_steps} \
-  --trainer.shuffle_buffer_size 10000 \
-  --trainer.save_interval 5000 \
+  --trainer.shuffle_buffer_size ${shuffle_buffer_size} \
+  --trainer.save_interval ${save_interval} \
   --trainer.use_wrist_image ${use_wrist_image} \
   --trainer.use_proprio ${use_proprio} \
-  --trainer.logging_frequency 100 \
-  --trainer.eval_interval 500 \
-  --trainer.learning_rate.base 1e-5 \
-  --trainer.learning_rate.action_model 1e-4 \
+  --trainer.logging_frequency ${logging_frequency} \
+  --trainer.eval_interval ${eval_interval} \
+  --trainer.num_warmup_steps ${num_warmup_steps} \
+  --trainer.learning_rate.base ${base_learning_rate} \
+  --trainer.learning_rate.action_model ${action_model_learning_rate} \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project ${wandb_project:-vla_dex3} \
