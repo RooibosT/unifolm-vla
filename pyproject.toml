@@ -36,12 +36,13 @@ dependencies = [
     "qwen-vl-utils",
     "omegaconf",
     "numpy==1.26.4",
-    "wandb",
+    "wandb==0.20.1",
     "dlimp @ git+https://github.com/kvablack/dlimp@d08da3852c149548aaa8551186d619d87375df08",
     "rich",
     "tensorflow_graphics==2021.12.3",
     "tensorflow==2.15.0",
     "tensorflow_datasets==4.9.3",
+    "protobuf==3.20.3",
     "diffusers==0.35.1",
     "tyro==0.9.35",
     "h5py",
@@ -97,5 +98,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-
 

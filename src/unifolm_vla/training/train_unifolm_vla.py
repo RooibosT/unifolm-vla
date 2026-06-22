@@ -233,7 +233,7 @@ class VLATrainer(TrainerUtils):
                 project=self.config.wandb_project,
                 entity=self.config.wandb_entity,
                 group="vla-train",
-                mode = "offline",
+                mode=os.environ.get("WANDB_MODE", "offline"),
             )
 
     def _init_checkpointing(self):
