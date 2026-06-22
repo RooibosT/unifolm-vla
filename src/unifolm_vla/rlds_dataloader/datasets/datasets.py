@@ -38,7 +38,7 @@ DEX3_DATASET_NAMES = {
 
 
 def is_dex3_mix(data_mix: str) -> bool:
-    if data_mix == "Unitree_Dex3_all_task":
+    if data_mix in {"Unitree_Dex3_all_task", "Unitree_Dex3_4view_task"}:
         return True
     return any(name in data_mix for name in DEX3_DATASET_NAMES)
 
@@ -234,5 +234,4 @@ class EpisodicRLDSDataset(RLDSDataset):
                 for i in range(rlds_batch["action"].shape[0])
             ]
             yield out
-
 

@@ -43,6 +43,16 @@ num_warmup_steps=${num_warmup_steps:-1000}
 base_learning_rate=${base_learning_rate:-1e-5}
 action_model_learning_rate=${action_model_learning_rate:-1e-4}
 save_final_model=${save_final_model:-True}
+pretrained_checkpoint=${pretrained_checkpoint:-}
+reload_modules=${reload_modules:-}
+
+pretrained_args=()
+if [ -n "${pretrained_checkpoint}" ]; then
+  pretrained_args+=(--trainer.pretrained_checkpoint "${pretrained_checkpoint}")
+fi
+if [ -n "${reload_modules}" ]; then
+  pretrained_args+=(--trainer.reload_modules "${reload_modules}")
+fi
 
 if [ "${gradient_accumulation_steps}" -ne 1 ]; then
   echo "gradient_accumulation_steps must be 1 with the current Accelerate + DeepSpeed ZeRO-2 training loop."
@@ -88,4 +98,5 @@ accelerate launch \
   --run_root_dir ${run_root_dir} \
   --run_id ${run_id} \
   --wandb_project ${wandb_project:-vla_dex3} \
-  --wandb_entity ${wandb_entity:-your_wandb_entity}
+  --wandb_entity ${wandb_entity:-your_wandb_entity} \
+  "${pretrained_args[@]}"

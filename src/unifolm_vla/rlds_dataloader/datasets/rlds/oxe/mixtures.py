@@ -363,6 +363,14 @@ OXE_NAMED_MIXTURES: Dict[str, List[Tuple[str, float]]] = {
         ("g1_dex3_pouring", 1.0),
         ("g1_dex3_toasted_bread", 1.0),
     ],
+    "Unitree_Dex3_4view_task": [
+        ("g1_dex3_block_stacking", 1.0),
+        ("g1_dex3_camera_packaging", 1.0),
+        ("g1_dex3_grasp_square", 1.0),
+        ("g1_dex3_object_placement", 1.0),
+        ("g1_dex3_pouring", 1.0),
+        ("g1_dex3_toasted_bread", 1.0),
+    ],
     "g1_dex3_block_stacking": [
         ("g1_dex3_block_stacking", 1.0),
     ],
