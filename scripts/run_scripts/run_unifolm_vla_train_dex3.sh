@@ -20,6 +20,7 @@ export NCCL_TIMEOUT=${NCCL_TIMEOUT:-1000}
 Framework_name=unifolm_vla
 base_vlm=${base_vlm:-/path/to/your/UnifoLM-VLM-Base}
 model_type=qwen2_5_vl
+attn_implementation=${attn_implementation:-sdpa}
 freeze_module_list=${freeze_module_list:-qwen_vl_interface}
 window_size=${window_size:-1}
 
@@ -74,6 +75,7 @@ accelerate launch \
   --framework.framework_py ${Framework_name} \
   --framework.qwenvl.base_vlm ${base_vlm} \
   --framework.qwenvl.model_type ${model_type} \
+  --framework.qwenvl.attn_implementation ${attn_implementation} \
   --framework.action_model.action_dim 28 \
   --framework.action_model.state_dim 28 \
   --framework.action_model.action_horizon 25 \

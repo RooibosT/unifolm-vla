@@ -10,7 +10,7 @@ framework:
   name: unifolm_vla
   qwenvl:
     base_vlm: /root/unitree_jiang/Unifolm-VLM-0
-    attn_implementation: flash_attention_2
+    attn_implementation: sdpa  # B200/torch2.7 SDPA works without flash-attn; set flash_attention_2 after installing flash-attn
     vl_hidden_dim: 2048
     model_type: qwen2_5_vl
 

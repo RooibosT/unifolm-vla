@@ -5,6 +5,7 @@ Lightweight PyTorch Dataset Definition for wrapping RLDS TFDS Pipeline; just def
 format to OpenVLA, IterableDataset shim.
 """
 
+import os
 from dataclasses import dataclass,field
 from pathlib import Path
 from typing import Any, Dict, Tuple, Type, Callable
@@ -157,6 +158,13 @@ class RLDSDataset(IterableDataset):
             load_language=True,
             action_proprio_normalization_type=ACTION_PROPRIO_NORMALIZATION_TYPE,
         )
+        # tf.data parallelism. The totals are split across datasets, so with N datasets the
+        # defaults give ~1 read/transform thread each (see "Threads per Dataset" log). Override
+        # via env to give each dataset multiple threads on many-core / NUMA-bound machines.
+        read_threads = int(os.environ.get("RLDS_READ_THREADS", 0)) or len(mixture_spec)
+        transform_threads = int(os.environ.get("RLDS_TRANSFORM_THREADS", 0)) or len(mixture_spec)
+        parallel_calls = int(os.environ.get("RLDS_PARALLEL_CALLS", 16))
+
         rlds_config = dict(
             traj_transform_kwargs=dict(
                 window_size=window_size,                                      # If we wanted to feed / predict more than one step
@@ -166,14 +174,14 @@ class RLDSDataset(IterableDataset):
             ),
             frame_transform_kwargs=dict(
                 resize_size=tuple(resize_resolution),
-                num_parallel_calls=16,                          # For CPU-intensive ops (decoding, resizing, etc.)
+                num_parallel_calls=parallel_calls,              # For CPU-intensive ops (decoding, resizing, etc.)
             ),
             dataset_kwargs_list=per_dataset_kwargs,
             shuffle_buffer_size=shuffle_buffer_size,
             sample_weights=weights,
             balance_weights=True,
-            traj_transform_threads=len(mixture_spec),
-            traj_read_threads=len(mixture_spec),
+            traj_transform_threads=transform_threads,
+            traj_read_threads=read_threads,
             train=train,
         )
 

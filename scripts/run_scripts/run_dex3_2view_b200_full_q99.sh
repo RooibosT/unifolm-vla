@@ -45,4 +45,5 @@ base_learning_rate=${base_learning_rate:-1e-5} \
 action_model_learning_rate=${action_model_learning_rate:-1e-4} \
 use_wrist_image=False \
 use_proprio=True \
+attn_implementation=${attn_implementation:-flash_attention_2} \
 scripts/run_scripts/run_unifolm_vla_train_dex3.sh
