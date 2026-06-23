@@ -6,7 +6,7 @@ authors = [
 description = "unifolm_vla-0"
 version = "0.0.1"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.11"  # data stack pins (tensorflow-addons 0.19.0) only ship cp310 wheels
 keywords = ["vision-language-actions models", " robotic manipulation", "multimodal pretraining", "robot learning", "generative models"]
 license = { text = "BSD-3-Clause" }
 
@@ -17,8 +17,8 @@ dependencies = [
     "einops",
     "transformers_stream_generator==0.0.4",
     "scipy",
-    "torch==2.5.1",
-    "torchvision==0.20.1",
+    "torch==2.7.1",
+    "torchvision==0.22.1",
     "pillow==11.3.0",
     "tensorboard",
     "matplotlib",
@@ -54,6 +54,16 @@ dependencies = [
     "jsonlines==4.0.0",
     "mujoco==3.3.5"
 ]
+
+# Pull torch / torchvision from the CUDA 12.8 wheel index (required for B200 / sm_100).
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 
 
 [project.optional-dependencies]
