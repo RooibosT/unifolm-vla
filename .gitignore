@@ -153,6 +153,8 @@ playground/Models
 =4.43.2
 
 # temp
+max_train_steps=*
+wandb_backup/
 playground/BuildData
 
 playground/Checkpoints
@@ -188,5 +190,4 @@ extracted_frames
 
 /logs
 /results
-
 
