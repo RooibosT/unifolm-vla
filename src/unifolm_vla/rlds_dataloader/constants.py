@@ -78,7 +78,9 @@ G1_DEX3_CONSTANTS = {
     "NUM_ACTIONS_CHUNK": 25,
     "ACTION_DIM": 28,
     "PROPRIO_DIM": 28,
-    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS,
+    # Use 1/99 quantile bounds instead of raw min/max so that occasional extreme
+    # dexterous-hand joint values do not compress the useful normalized range.
+    "ACTION_PROPRIO_NORMALIZATION_TYPE": NormalizationType.BOUNDS_Q99,
 }
 
 # Function to detect robot platform from command line arguments
