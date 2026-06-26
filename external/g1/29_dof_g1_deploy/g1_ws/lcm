@@ -1,0 +1,2 @@
+sudo ip route del default via 192.168.123.1 dev eth0 2>/dev/null || true
+sudo ip route replace 239.255.76.67/32 dev wlan0
