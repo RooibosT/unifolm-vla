@@ -14,6 +14,7 @@ constexpr uint32_t kPolicyActionMagic = 0x31414347U;  // "GCA1" little-endian.
 constexpr uint32_t kRobotStateMagic = 0x31545347U;    // "GST1" little-endian.
 constexpr uint16_t kProtocolVersionV1 = 1;
 constexpr uint16_t kProtocolVersionV2 = 2;
+constexpr uint16_t kProtocolVersionV3 = 3;
 constexpr uint16_t kProtocolVersion = kProtocolVersionV2;
 constexpr uint16_t kActionFlagEmergencyStop = 1U << 0;
 constexpr uint16_t kActionFlagLeftGrip      = 1U << 1;  // left hand close
@@ -23,10 +24,12 @@ constexpr uint16_t kStateFlagHasLeftHandQ = 1U << 1;   // left dex3 joint feedba
 constexpr uint16_t kStateFlagHasRightHandQ = 1U << 2;  // right dex3 joint feedback
 
 constexpr int kHandMotorCount = 7;  // dex3 motors per hand
+constexpr int kDex3ActionDim = 28;
 
 // Add: eunbin
 constexpr uint16_t kActionFlagHasLeftHandQ = 1U << 3; // left hand joint positions
 constexpr uint16_t kActionFlagHasRightHandQ = 1U << 4; // right hand joint positions
+constexpr uint16_t kActionFlagDex3AbsoluteQ = 1U << 5; // q_target[28] is absolute Dex3 target
 #pragma pack(push, 1)
 struct PolicyActionPacketV1 {
   uint32_t magic = kPolicyActionMagic;
@@ -47,6 +50,15 @@ struct PolicyActionPacketV2 {
 
   std::array<float, 7> left_hand_q = {};
   std::array<float, 7> right_hand_q = {};
+};
+
+struct PolicyActionPacketV3 {
+  uint32_t magic = kPolicyActionMagic;
+  uint16_t version = kProtocolVersionV3;
+  uint16_t flags = kActionFlagDex3AbsoluteQ;
+  uint64_t sequence = 0;
+  int64_t send_time_us = 0;
+  std::array<float, kDex3ActionDim> q_target = {};
 };
 
 using PolicyActionPacket = PolicyActionPacketV2;

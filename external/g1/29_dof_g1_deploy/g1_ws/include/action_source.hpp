@@ -9,6 +9,11 @@
 
 #include "robot_parameters.hpp"
 
+enum class ActionCommandType : uint8_t {
+  kBodyScaled29 = 0,
+  kDex3Absolute28 = 1,
+};
+
 // struct ActionCommand {
 //   std::array<float, G1_NUM_MOTOR> action = {};
 //   uint64_t sequence = 0;
@@ -18,7 +23,9 @@
 //   bool right_grip = false;  // kActionFlagRightGrip bit
 // };
 struct ActionCommand {
+  ActionCommandType type = ActionCommandType::kBodyScaled29;
   std::array<float, G1_NUM_MOTOR> action = {};
+  std::array<float, 28> dex3_q_target = {};
   std::array<float, 7> left_hand_q = {};
   std::array<float, 7> right_hand_q = {};
   bool has_left_hand_q = false;
@@ -42,4 +49,3 @@ class ActionSource {
 };
 
 #endif
-

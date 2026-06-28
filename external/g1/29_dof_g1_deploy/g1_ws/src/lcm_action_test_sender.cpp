@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -85,9 +86,39 @@ bool SendV2Joint(lcm_t* lcm, uint64_t sequence) {
   return true;
 }
 
+void FillDex3Absolute(std::array<float, g1_lcm::kDex3ActionDim>& q_target,
+                      const std::string& pattern,
+                      uint64_t sequence) {
+  q_target.fill(0.0f);
+  if (pattern == "sine-small") {
+    const float phase = static_cast<float>(sequence) * 0.1f;
+    for (size_t i = 0; i < q_target.size(); ++i) {
+      q_target[i] = 0.05f * std::sin(phase + static_cast<float>(i) * 0.2f);
+    }
+  }
+}
+
+bool SendV3Dex3(lcm_t* lcm, uint64_t sequence, const std::string& pattern) {
+  g1_lcm::PolicyActionPacketV3 packet;
+  packet.sequence = sequence;
+  packet.send_time_us = NowUnixMicros();
+  packet.flags = g1_lcm::kActionFlagDex3AbsoluteQ;
+  FillDex3Absolute(packet.q_target, pattern, sequence);
+  if (!Publish(lcm, &packet, sizeof(packet))) {
+    return false;
+  }
+  std::cout << "sent v3-dex3 seq=" << sequence << " size=" << sizeof(packet)
+            << " pattern=" << pattern
+            << " left_arm[0]=" << packet.q_target[0]
+            << " right_hand[6]=" << packet.q_target[27] << '\n';
+  return true;
+}
+
 void PrintUsage(const char* argv0) {
-  std::cout << "Usage: " << argv0 << " [v1-binary|v2-binary|v2-joint|all] [lcm_url]\n"
+  std::cout << "Usage: " << argv0
+            << " [v1-binary|v2-binary|v2-joint|v3-dex3|all] [lcm_url] [zero|sine-small]\n"
             << "Default mode: all\n"
+            << "Default V3 pattern: zero\n"
             << "Default URL: udpm://239.255.76.67:7667?ttl=0\n";
 }
 
@@ -96,6 +127,7 @@ void PrintUsage(const char* argv0) {
 int main(int argc, char** argv) {
   std::string mode = "all";
   std::string lcm_url = "udpm://239.255.76.67:7667?ttl=0";
+  std::string pattern = "zero";
 
   if (argc > 1) {
     mode = argv[1];
@@ -106,6 +138,9 @@ int main(int argc, char** argv) {
   }
   if (argc > 2) {
     lcm_url = argv[2];
+  }
+  if (argc > 3) {
+    pattern = argv[3];
   }
 
   lcm_t* lcm = lcm_create(lcm_url.c_str());
@@ -122,12 +157,16 @@ int main(int argc, char** argv) {
     ok = SendV2Binary(lcm, sequence);
   } else if (mode == "v2-joint") {
     ok = SendV2Joint(lcm, sequence);
+  } else if (mode == "v3-dex3") {
+    ok = SendV3Dex3(lcm, sequence, pattern);
   } else if (mode == "all") {
     ok = SendV1Binary(lcm, sequence++);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     ok = ok && SendV2Binary(lcm, sequence++);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     ok = ok && SendV2Joint(lcm, sequence++);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    ok = ok && SendV3Dex3(lcm, sequence++, pattern);
   } else {
     std::cerr << "unknown mode: " << mode << '\n';
     PrintUsage(argv[0]);

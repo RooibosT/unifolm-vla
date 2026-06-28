@@ -10,6 +10,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -171,6 +172,49 @@ struct BridgeOptions {
   int camera_jpeg_quality = 80;
 };
 
+constexpr std::array<int, 7> kLeftArmMotorIndices = {
+    LeftShoulderPitch, LeftShoulderRoll, LeftShoulderYaw, LeftElbow,
+    LeftWristRoll, LeftWristPitch, LeftWristYaw};
+constexpr std::array<int, 7> kRightArmMotorIndices = {
+    RightShoulderPitch, RightShoulderRoll, RightShoulderYaw, RightElbow,
+    RightWristRoll, RightWristPitch, RightWristYaw};
+// Unitree Dex3 example limits. Verify against the mounted Dex3 hardware before
+// raising gains or max-delta limits for real robot runs.
+constexpr std::array<float, dex3::kMotorCount> kLeftHandMin = {
+    -1.05f, -0.724f, 0.0f, -1.57f, -1.75f, -1.57f, -1.75f};
+constexpr std::array<float, dex3::kMotorCount> kLeftHandMax = {
+    1.05f, 1.05f, 1.75f, 0.0f, 0.0f, 0.0f, 0.0f};
+constexpr std::array<float, dex3::kMotorCount> kRightHandMin = {
+    -1.05f, -1.05f, -1.75f, 0.0f, 0.0f, 0.0f, 0.0f};
+constexpr std::array<float, dex3::kMotorCount> kRightHandMax = {
+    1.05f, 0.742f, 0.0f, 1.57f, 1.75f, 1.57f, 1.75f};
+constexpr float kArmJointMin = -3.0f;
+constexpr float kArmJointMax = 3.0f;
+constexpr float kArmMaxDeltaRad = 0.20f;
+constexpr float kHandMaxDeltaRad = 0.25f;
+
+float ClampFloat(float value, float min_value, float max_value, bool* clamped = nullptr) {
+  if (!std::isfinite(value)) {
+    if (clamped) {
+      *clamped = true;
+    }
+    return 0.0f;
+  }
+  if (value < min_value) {
+    if (clamped) {
+      *clamped = true;
+    }
+    return min_value;
+  }
+  if (value > max_value) {
+    if (clamped) {
+      *clamped = true;
+    }
+    return max_value;
+  }
+  return value;
+}
+
 template <typename T>
 class TimestampedBuffer {
  public:
@@ -284,6 +328,8 @@ class G1LowLevelBridge {
       std::cout << "[bridge] External actions are enabled; stale/missing actions fall back to damping.\n";
     }
     std::cout << "[bridge] Dex3 left/right hands are included in safe timeout-stop mode.\n";
+    std::cout << "[bridge] Dex3 V3 absolute-q holds legs/waist at current LowState q with configured gains;\n"
+              << "         use real execution only in a stable fixed/supported posture or with a balance controller.\n";
     return true;
   }
 
@@ -337,8 +383,8 @@ class G1LowLevelBridge {
  private:
   static constexpr auto kCommandWriterPeriod = std::chrono::microseconds(2000);
   static constexpr auto kControlPeriod = std::chrono::microseconds(20000);
-  static constexpr auto kLowStateTimeout = std::chrono::milliseconds(10000000000000);
-  static constexpr auto kActionTimeout = std::chrono::milliseconds(10000000000000);
+  static constexpr auto kLowStateTimeout = std::chrono::milliseconds(500);
+  static constexpr auto kActionTimeout = std::chrono::milliseconds(200);
 
   void LowStateHandler(const void* message) {
     LowState_ low_state = *(const LowState_*)message;
@@ -432,28 +478,37 @@ class G1LowLevelBridge {
     }
 
   void UpdateCommandFromActionSource() {
+    if (!low_state_buffer_.FreshFor(kLowStateTimeout)) {
+      if (!reported_waiting_for_lowstate_) {
+        std::cerr << "[bridge] LowState stale/missing. Switching to damping command.\n";
+        reported_waiting_for_lowstate_ = true;
+      }
+      SetDampingCommand();
+      return;
+    }
     reported_waiting_for_lowstate_ = false;
 
     auto maybe_action = action_source_->Poll();
     if (!maybe_action) {
-      // Damping Action when action source is none
-      //SetDampingCommand();
+      SetDampingCommand();
       return;
     }
 
     const ActionCommand& command = *maybe_action;
-    // if (command.emergency_stop) {
-    //   std::cerr << "[bridge] Emergency stop requested by action source.\n";
-    //   SetDampingCommand();
-    //   return;
-    // }
+    if (command.emergency_stop) {
+      std::cerr << "[bridge] Emergency stop requested by action source.\n";
+      SetDampingCommand();
+      dex3_hands_.StopAll();
+      return;
+    }
 
-    // const auto age = std::chrono::steady_clock::now() - command.received_at;
-    // if (age > kActionTimeout) {
-    //   std::cerr << "[bridge] Action timeout. Switching to damping command.\n";
-    //   //SetDampingCommand();
-    //   return;
-    // }
+    const auto age = std::chrono::steady_clock::now() - command.received_at;
+    if (age > kActionTimeout) {
+      std::cerr << "[bridge] Action timeout. Switching to damping command.\n";
+      SetDampingCommand();
+      dex3_hands_.StopAll();
+      return;
+    }
 
     if (options_.dry_run_actions) {
       static uint64_t last_reported_sequence = 0;
@@ -470,22 +525,39 @@ class G1LowLevelBridge {
         };
 
         std::cout << "[bridge] Dry-run action received seq=" << command.sequence;
-        if (command.has_left_hand_q) {
-          std::cout << " left=joint";
-          print_hand_q("left", command.left_hand_q);
+        if (command.type == ActionCommandType::kDex3Absolute28) {
+          std::cout << " type=dex3_absolute28"
+                    << " left_arm=[" << command.dex3_q_target[0] << ", "
+                    << command.dex3_q_target[6] << "]"
+                    << " left_hand=[" << command.dex3_q_target[7] << ", "
+                    << command.dex3_q_target[13] << "]"
+                    << " right_arm=[" << command.dex3_q_target[14] << ", "
+                    << command.dex3_q_target[20] << "]"
+                    << " right_hand=[" << command.dex3_q_target[21] << ", "
+                    << command.dex3_q_target[27] << "]";
         } else {
-          std::cout << " left=binary(" << (command.left_grip ? "close" : "open") << ")";
-        }
-        if (command.has_right_hand_q) {
-          std::cout << " right=joint";
-          print_hand_q("right", command.right_hand_q);
-        } else {
-          std::cout << " right=binary(" << (command.right_grip ? "close" : "open") << ")";
+          if (command.has_left_hand_q) {
+            std::cout << " left=joint";
+            print_hand_q("left", command.left_hand_q);
+          } else {
+            std::cout << " left=binary(" << (command.left_grip ? "close" : "open") << ")";
+          }
+          if (command.has_right_hand_q) {
+            std::cout << " right=joint";
+            print_hand_q("right", command.right_hand_q);
+          } else {
+            std::cout << " right=binary(" << (command.right_grip ? "close" : "open") << ")";
+          }
         }
         std::cout << '\n';
         last_reported_sequence = command.sequence;
       }
       SetDampingCommand();
+      return;
+    }
+
+    if (command.type == ActionCommandType::kDex3Absolute28) {
+      ApplyDex3AbsoluteCommand(command);
       return;
     }
 
@@ -566,6 +638,123 @@ class G1LowLevelBridge {
     }
   }
 
+  void ApplyDex3AbsoluteCommand(const ActionCommand& command) {
+    auto maybe_low_state = low_state_buffer_.Get();
+    if (!maybe_low_state) {
+      SetDampingCommand();
+      return;
+    }
+    const LowState_& low_state = *maybe_low_state;
+
+    bool clamped = false;
+    MotorCommand motor_command;
+    for (int i = 0; i < G1_NUM_MOTOR; ++i) {
+      motor_command.q_target[i] = low_state.motor_state()[i].q();
+      motor_command.dq_target[i] = 0.0F;
+      motor_command.tau_ff[i] = 0.0F;
+      motor_command.kp[i] = kps[i];
+      motor_command.kd[i] = kds[i];
+    }
+
+    for (int j = 0; j < 7; ++j) {
+      const int left_index = kLeftArmMotorIndices[j];
+      const int right_index = kRightArmMotorIndices[j];
+      const float left_current = low_state.motor_state()[left_index].q();
+      const float right_current = low_state.motor_state()[right_index].q();
+      const float left_target = command.dex3_q_target[j];
+      const float right_target = command.dex3_q_target[14 + j];
+
+      float left_clamped = ClampFloat(left_target, kArmJointMin, kArmJointMax, &clamped);
+      left_clamped = ClampFloat(left_clamped,
+                                left_current - kArmMaxDeltaRad,
+                                left_current + kArmMaxDeltaRad,
+                                &clamped);
+      float right_clamped = ClampFloat(right_target, kArmJointMin, kArmJointMax, &clamped);
+      right_clamped = ClampFloat(right_clamped,
+                                 right_current - kArmMaxDeltaRad,
+                                 right_current + kArmMaxDeltaRad,
+                                 &clamped);
+      motor_command.q_target[left_index] = left_clamped;
+      motor_command.q_target[right_index] = right_clamped;
+    }
+
+    motor_command_buffer_.Set(motor_command);
+
+    const auto left_state = dex3_hands_.GetLeftState();
+    const auto right_state = dex3_hands_.GetRightState();
+    const bool has_left_hand_reference = left_state.valid || last_left_hand_q_.has_value();
+    const bool has_right_hand_reference = right_state.valid || last_right_hand_q_.has_value();
+    if (!has_left_hand_reference || !has_right_hand_reference) {
+      if (!reported_waiting_for_dex3_hand_state_) {
+        std::cout << "[bridge] Waiting for Dex3 hand state before applying "
+                  << (!has_left_hand_reference && !has_right_hand_reference
+                          ? "left/right"
+                          : (!has_left_hand_reference ? "left" : "right"))
+                  << " hand absolute-q targets.\n";
+        reported_waiting_for_dex3_hand_state_ = true;
+      }
+    } else {
+      reported_waiting_for_dex3_hand_state_ = false;
+    }
+
+    std::array<float, dex3::kMotorCount> left_hand_q = {};
+    std::array<float, dex3::kMotorCount> right_hand_q = {};
+    for (int j = 0; j < dex3::kMotorCount; ++j) {
+      if (has_left_hand_reference) {
+        const float left_current = left_state.valid ? left_state.q[j] : (*last_left_hand_q_)[j];
+        float left_target = ClampFloat(command.dex3_q_target[7 + j],
+                                       kLeftHandMin[j],
+                                       kLeftHandMax[j],
+                                       &clamped);
+        left_target = ClampFloat(left_target,
+                                 left_current - kHandMaxDeltaRad,
+                                 left_current + kHandMaxDeltaRad,
+                                 &clamped);
+        left_hand_q[j] = left_target;
+      }
+
+      if (has_right_hand_reference) {
+        const float right_current = right_state.valid ? right_state.q[j] : (*last_right_hand_q_)[j];
+        float right_target = ClampFloat(command.dex3_q_target[21 + j],
+                                        kRightHandMin[j],
+                                        kRightHandMax[j],
+                                        &clamped);
+        right_target = ClampFloat(right_target,
+                                  right_current - kHandMaxDeltaRad,
+                                  right_current + kHandMaxDeltaRad,
+                                  &clamped);
+        right_hand_q[j] = right_target;
+      }
+    }
+
+    bool hand_command_updated = false;
+    if (has_left_hand_reference) {
+      dex3_hands_.SetJointPositions(true, left_hand_q);
+      last_left_hand_q_ = left_hand_q;
+      hand_command_updated = true;
+    }
+    if (has_right_hand_reference) {
+      dex3_hands_.SetJointPositions(false, right_hand_q);
+      last_right_hand_q_ = right_hand_q;
+      hand_command_updated = true;
+    }
+    if (hand_command_updated) {
+      dex3_hands_.WriteOnce();
+    }
+
+    const uint64_t applied_count = ++action_applied_count_;
+    if (applied_count == 1 || command.sequence != last_reported_dex3_sequence_ ||
+        applied_count % 500 == 0) {
+      const auto action_age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now() - command.received_at).count();
+      std::cout << "[bridge] Applied Dex3 absolute action count=" << applied_count
+                << " seq=" << command.sequence
+                << " age_ms=" << action_age_ms
+                << " clamped=" << (clamped ? "yes" : "no") << '\n';
+      last_reported_dex3_sequence_ = command.sequence;
+    }
+  }
+
   void SetPolicyActionCommand(const std::array<float, G1_NUM_MOTOR>& action) {
     MotorCommand motor_command;
     for (int i = 0; i < G1_NUM_MOTOR; ++i) {
@@ -606,24 +795,7 @@ class G1LowLevelBridge {
     dds_low_command.mode_pr(static_cast<uint8_t>(Mode::PR));
     dds_low_command.mode_machine(mode_machine_.load());
 
-    bool is_damping = true;
-    for (int i = 0; i < G1_NUM_MOTOR; ++i) {
-      if (raw.q_target[i] > 0.1f) { is_damping = false; break; }
-    }
-
-    const MotorCommand* command_to_use = &raw;
-    if (is_damping && last_valid_command_.has_value() && !options_.dry_run_actions) {
-      command_to_use = &(*last_valid_command_);
-      static uint64_t damping_skip_count = 0;
-      if (++damping_skip_count % 1 == 1) {
-        std::cerr << "[bridge] Damping detected — holding last valid command "
-                  << "(skip_count=" << damping_skip_count << ")\n";
-      }
-    } else if (!is_damping) {
-      last_valid_command_ = raw;
-    }
-
-    const MotorCommand& command = *command_to_use;
+    const MotorCommand& command = raw;
     for (int i = 0; i < G1_NUM_MOTOR; ++i) {
       dds_low_command.motor_cmd().at(i).mode() = 1;
       dds_low_command.motor_cmd().at(i).tau() = command.tau_ff[i];
@@ -656,7 +828,8 @@ class G1LowLevelBridge {
   std::optional<std::array<float, dex3::kMotorCount>> last_left_hand_q_;
   std::optional<std::array<float, dex3::kMotorCount>> last_right_hand_q_;
 
-  std::optional<MotorCommand> last_valid_command_;
+  uint64_t last_reported_dex3_sequence_ = 0;
+  bool reported_waiting_for_dex3_hand_state_ = false;
 
 
 #if defined(G1_HAS_OPENCV) && defined(G1_HAS_LCM)

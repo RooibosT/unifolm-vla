@@ -13,14 +13,27 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import uvicorn
 import json_numpy
+
 json_numpy.patch()
 import tensorflow as tf
 from qwen_vl_utils import process_vision_info
 import traceback
 from unifolm_vla.model.framework.base_framework import baseframework
-from unifolm_vla.rlds_dataloader.constants import ACTION_PROPRIO_NORMALIZATION_TYPE, NormalizationType
+from unifolm_vla.rlds_dataloader.constants import (
+    ACTION_PROPRIO_NORMALIZATION_TYPE,
+    NormalizationType,
+)
+
 DEVICE = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-unifolm_vla_IMAGE_SIZE = 224  
+unifolm_vla_IMAGE_SIZE = 224
+DEX3_IMAGE_KEYS = ("image_primary", "image_secondary")
+DEX3_WRIST_IMAGE_KEYS = ("image_left_wrist", "image_right_wrist")
+DEX3_PROMPT_TEMPLATE = (
+    'You are a robot using the joint control. The task is "{instruction}". '
+    "Please predict up to 10 key trajectory points to complete the task. "
+    "Your answer should be formatted as a list of tuples, i.e. [[x1, y1], [x2, y2], ...], "
+    "where each tuple contains the x and y coordinates of a point."
+)
 
 
 def check_image_format(image: Any) -> None:
@@ -43,7 +56,9 @@ def check_image_format(image: Any) -> None:
     )
 
 
-def resize_image_for_policy(img: np.ndarray, resize_size: Union[int, Tuple[int, int]]) -> np.ndarray:
+def resize_image_for_policy(
+    img: np.ndarray, resize_size: Union[int, Tuple[int, int]]
+) -> np.ndarray:
     """
     Resize an image to match the policy's expected input size.
 
@@ -67,6 +82,7 @@ def resize_image_for_policy(img: np.ndarray, resize_size: Union[int, Tuple[int, 
     img = tf.cast(tf.clip_by_value(tf.round(img), 0, 255), tf.uint8)
 
     return img.numpy()
+
 
 def crop_and_resize(image: tf.Tensor, crop_scale: float, batch_size: int) -> tf.Tensor:
     """
@@ -108,7 +124,10 @@ def crop_and_resize(image: tf.Tensor, crop_scale: float, batch_size: int) -> tf.
 
     # Apply crop and resize
     image = tf.image.crop_and_resize(
-        image, bounding_boxes, tf.range(batch_size), (unifolm_vla_IMAGE_SIZE, unifolm_vla_IMAGE_SIZE)
+        image,
+        bounding_boxes,
+        tf.range(batch_size),
+        (unifolm_vla_IMAGE_SIZE, unifolm_vla_IMAGE_SIZE),
     )
 
     # Remove batch dimension if it was added
@@ -116,6 +135,7 @@ def crop_and_resize(image: tf.Tensor, crop_scale: float, batch_size: int) -> tf.
         image = image[0]
 
     return image
+
 
 def center_crop_image(image: Union[np.ndarray, Image.Image]) -> Image.Image:
     """
@@ -149,21 +169,29 @@ def center_crop_image(image: Union[np.ndarray, Image.Image]) -> Image.Image:
     # Convert to PIL Image
     return Image.fromarray(image.numpy()).convert("RGB")
 
-def unnormalize_action(normalized_actions: np.ndarray, action_norm_stats: Dict[str, Any]) -> np.ndarray:
-    if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
-            mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
-            action_high, action_low = np.array(action_norm_stats["max"]), np.array(action_norm_stats["min"])
-    elif ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS_Q99:
-            mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
-            action_high, action_low = np.array(action_norm_stats["q99"]), np.array(action_norm_stats["q01"])
 
-    actions = np.where(
-            mask,
-            0.5 * (normalized_actions + 1) * (action_high - action_low + 1e-8) + action_low,
-            normalized_actions,
+def unnormalize_action(
+    normalized_actions: np.ndarray, action_norm_stats: Dict[str, Any]
+) -> np.ndarray:
+    if ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS:
+        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["min"], dtype=bool))
+        action_high, action_low = np.array(action_norm_stats["max"]), np.array(
+            action_norm_stats["min"]
+        )
+    elif ACTION_PROPRIO_NORMALIZATION_TYPE == NormalizationType.BOUNDS_Q99:
+        mask = action_norm_stats.get("mask", np.ones_like(action_norm_stats["q01"], dtype=bool))
+        action_high, action_low = np.array(action_norm_stats["q99"]), np.array(
+            action_norm_stats["q01"]
         )
 
+    actions = np.where(
+        mask,
+        0.5 * (normalized_actions + 1) * (action_high - action_low + 1e-8) + action_low,
+        normalized_actions,
+    )
+
     return actions
+
 
 def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.ndarray:
     """
@@ -197,24 +225,27 @@ def normalize_proprio(proprio: np.ndarray, norm_stats: Dict[str, Any]) -> np.nda
 
     return normalized_proprio
 
+
 class Unifolm_VLA_Server:
     """FastAPI服务器, 用于VLA模型推理"""
-    
+
     def __init__(self, args):
         self.args = args
         logging.info("Loading VLA model from: %s", args.ckpt_path)
-        
+
         # TODO: should auto detect framework from model path
-        vla = baseframework.from_pretrained(args.ckpt_path, vlm_pretrained_path=args.vlm_pretrained_path)
+        vla = baseframework.from_pretrained(
+            args.ckpt_path, vlm_pretrained_path=args.vlm_pretrained_path
+        )
 
         if args.use_bf16:
             logging.info("Converting model to bfloat16")
             vla = vla.to(torch.bfloat16)
-        
+
         vla = vla.to("cuda").eval()
-        self.vla = vla        
-        self.norm_stats_action = vla.norm_stats[self.args.unnorm_key]['action']
-        self.norm_stats_proprio = vla.norm_stats[self.args.unnorm_key]['proprio']
+        self.vla = vla
+        self.norm_stats_action = vla.norm_stats[self.args.unnorm_key]["action"]
+        self.norm_stats_proprio = vla.norm_stats[self.args.unnorm_key]["proprio"]
         self.processor = vla.qwen_vl_interface.processor
         logging.info("Model loaded successfully")
 
@@ -249,8 +280,33 @@ class Unifolm_VLA_Server:
             processed_images.append(pil_image)
 
         return processed_images
-        
-    
+
+    def extract_observation_images(
+        self, observation: Dict[str, Any]
+    ) -> Tuple[List[np.ndarray], bool]:
+        """Return images in training order and whether the Dex3 explicit schema was used."""
+        if all(key in observation for key in DEX3_IMAGE_KEYS):
+            images = [observation[key] for key in DEX3_IMAGE_KEYS]
+            images.extend([observation[key] for key in DEX3_WRIST_IMAGE_KEYS if key in observation])
+            return images, True
+
+        if "full_image" not in observation:
+            raise KeyError(
+                "Observation must contain either Dex3 image_primary/image_secondary "
+                "or legacy full_image."
+            )
+
+        images = [observation["full_image"]]
+        images.extend([observation[k] for k in observation.keys() if "wrist" in k])
+        return images, False
+
+    @staticmethod
+    def build_prompt(instruction: str, is_dex3_schema: bool) -> str:
+        lang = instruction.lower()
+        if is_dex3_schema:
+            return DEX3_PROMPT_TEMPLATE.format(instruction=lang)
+        return f'The task is "{lang}".'
+
     def get_server_action(self, payload: Dict[str, Any]) -> str:
         try:
             t1 = time.time()
@@ -259,31 +315,28 @@ class Unifolm_VLA_Server:
                 assert len(payload.keys()) == 1, "Only uses encoded payload!"
                 payload = json.loads(payload["encoded"])
 
-            observations = payload['observations']
+            observations = payload["observations"]
             all_images = []
-            for observation in observations:    
-                all_images.append(observation["full_image"])
+            dex3_schema_flags = []
             for observation in observations:
-                all_images.extend([observation[k] for k in observation.keys() if "wrist" in k])
+                images, is_dex3_schema = self.extract_observation_images(observation)
+                all_images.extend(images)
+                dex3_schema_flags.append(is_dex3_schema)
             instruction = observations[0]["instruction"]
-            
+
             if observations[0].get("task_name", None) is not None:
                 task_name = observations[0].get("task_name", None)
-                self.norm_stats_action = self.vla.norm_stats[task_name]['action']
-                self.norm_stats_proprio = self.vla.norm_stats[task_name]['proprio']
+                self.norm_stats_action = self.vla.norm_stats[task_name]["action"]
+                self.norm_stats_proprio = self.vla.norm_stats[task_name]["proprio"]
 
             # Process images
             all_images = self.prepare_images_for_vla(all_images, self.args)
-            lang = instruction.lower()
-            text = f"The task is \"{lang}\"."
+            text = self.build_prompt(instruction, any(dex3_schema_flags))
             messages = [
                 {
                     "role": "user",
                     "content": [
-                        *[
-                            {"type": "image", "image": img}
-                            for img in all_images
-                        ],
+                        *[{"type": "image", "image": img} for img in all_images],
                         {"type": "text", "text": text},
                     ],
                 },
@@ -302,47 +355,56 @@ class Unifolm_VLA_Server:
             )
             proprios = []
             for observation in observations:
-                proprios.append(observation["state"])
-                
-            batch_input["state"] = torch.from_numpy(normalize_proprio(np.stack(proprios, axis=0), self.norm_stats_proprio)).unsqueeze(0).to(DEVICE)
+                state = np.asarray(observation["state"], dtype=np.float32)
+                if any(dex3_schema_flags) and state.shape[-1] != 28:
+                    raise ValueError(f"Dex3 observation state must be 28D, got shape {state.shape}")
+                proprios.append(state)
+
+            batch_input["state"] = (
+                torch.from_numpy(
+                    normalize_proprio(np.stack(proprios, axis=0), self.norm_stats_proprio)
+                )
+                .unsqueeze(0)
+                .to(DEVICE)
+            )
 
             batch_input["input_ids"] = batch_input["input_ids"].to(DEVICE)
             batch_input["attention_mask"] = batch_input["attention_mask"].to(DEVICE)
             batch_input["pixel_values"] = batch_input["pixel_values"].to(DEVICE)
             batch_input["image_grid_thw"] = batch_input["image_grid_thw"].to(DEVICE)
-            
+
             action = self.vla.predict_action(
                 qwen_inputs=batch_input,
             )
 
-            action = unnormalize_action(action['normalized_actions'][0], self.norm_stats_action)
+            action = unnormalize_action(action["normalized_actions"][0], self.norm_stats_action)
             inference_time = time.time() - t1
             logging.info(f"VLA inference time: {inference_time:.3f}s")
-            
+
             print(f"get_vla_action time: {time.time() - t1}")
             if double_encode:
                 return JSONResponse(json_numpy.dumps(action))
             else:
                 return JSONResponse(action)
-        except:  
+        except:
             logging.error(traceback.format_exc())
             logging.warning(
                 "Your request threw an error; make sure your request complies with the expected format:\n"
                 "{'observation': dict, 'instruction': str}\n"
             )
             return "error"
-        
+
     def run(self, host: str = "0.0.0.0", port: int = 8777) -> None:
         """启动FastAPI服务器"""
         logging.info("Creating FastAPI server...")
         self.app = FastAPI(
             title="VLA Model Server",
             description="VLA (Vision-Language-Action) Model Inference API",
-            version="1.0.0"
+            version="1.0.0",
         )
 
         self.app.post("/act")(self.get_server_action)
-        
+
         logging.info(f"Starting server on http://{host}:{port}")
         logging.info(f"API endpoint: POST http://{host}:{port}/act")
         logging.info("Press Ctrl+C to stop the server")
@@ -355,53 +417,32 @@ def deploy(args):
     server = Unifolm_VLA_Server(args)
     server.run(host=args.host, port=args.port)
 
+
 def build_argparser():
     """构建命令行参数解析器"""
     parser = argparse.ArgumentParser(
         description="部署VLA模型为FastAPI服务器",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--ckpt_path", 
-        type=str, 
+        "--ckpt_path",
+        type=str,
         default="/path/to/your/ckpt.pt",
-        help="模型检查点路径或HuggingFace模型名称"
+        help="模型检查点路径或HuggingFace模型名称",
     )
     parser.add_argument(
         "--vlm_pretrained_path",
         type=str,
         default=None,
-        help="VLM模型检查点路径或HuggingFace模型名称"
+        help="VLM模型检查点路径或HuggingFace模型名称",
     )
+    parser.add_argument("--unnorm_key", type=str, default="new_embodiment", help="数据集名称")
+    parser.add_argument("--host", type=str, default="0.0.0.0", help="服务器监听地址")
+    parser.add_argument("--port", type=int, default=8777, help="服务器监听端口")
     parser.add_argument(
-        "--unnorm_key",
-        type=str,
-        default="new_embodiment",
-        help="数据集名称"
+        "--use_bf16", action="store_true", default=True, help="是否使用bfloat16精度"
     )
-    parser.add_argument(
-        "--host",
-        type=str,
-        default="0.0.0.0",
-        help="服务器监听地址"
-    )
-    parser.add_argument(
-        "--port", 
-        type=int, 
-        default=8777,
-        help="服务器监听端口"
-    )
-    parser.add_argument(
-        "--use_bf16", 
-        action="store_true",
-        default=True,
-        help="是否使用bfloat16精度"
-    )
-    parser.add_argument(
-        "--center_crop", 
-        action="store_true",
-        help="是否使用双重编码"
-    )
+    parser.add_argument("--center_crop", action="store_true", help="是否使用双重编码")
 
     return parser
 
@@ -409,11 +450,11 @@ def build_argparser():
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        force=True
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        force=True,
     )
-    
+
     parser = build_argparser()
     args = parser.parse_args()
-    
+
     deploy(args)

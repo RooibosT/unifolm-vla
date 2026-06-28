@@ -102,7 +102,8 @@ class LcmActionSource final : public ActionSource {
         std::cerr << "[lcm-action] Bad packet size count=" << bad_packet_count_.load()
                   << " size=0"
                   << " expected_v1=" << sizeof(g1_lcm::PolicyActionPacketV1)
-                  << " expected_v2=" << sizeof(g1_lcm::PolicyActionPacketV2) << '\n';
+                  << " expected_v2=" << sizeof(g1_lcm::PolicyActionPacketV2)
+                  << " expected_v3=" << sizeof(g1_lcm::PolicyActionPacketV3) << '\n';
       }
       return;
     }
@@ -150,15 +151,51 @@ class LcmActionSource final : public ActionSource {
         command.right_hand_q = packet.right_hand_q;
       }
       packet_sequence = packet.sequence;
+    } else if (buffer->data_size == sizeof(g1_lcm::PolicyActionPacketV3)) {
+      g1_lcm::PolicyActionPacketV3 packet;
+      std::memcpy(&packet, buffer->data, sizeof(packet));
+      if (packet.magic != g1_lcm::kPolicyActionMagic ||
+          packet.version != g1_lcm::kProtocolVersionV3 ||
+          (packet.flags & g1_lcm::kActionFlagDex3AbsoluteQ) == 0) {
+        ++bad_packet_count_;
+        if (bad_packet_count_ <= 5 || bad_packet_count_ % 100 == 0) {
+          std::cerr << "[lcm-action] Bad v3 packet header count=" << bad_packet_count_.load()
+                    << " magic=0x" << std::hex << packet.magic << std::dec
+                    << " version=" << packet.version
+                    << " flags=0x" << std::hex << packet.flags << std::dec << '\n';
+        }
+        return;
+      }
+
+      command.type = ActionCommandType::kDex3Absolute28;
+      command.dex3_q_target = packet.q_target;
+      command.sequence = packet.sequence;
+      command.received_at = std::chrono::steady_clock::now();
+      command.emergency_stop = (packet.flags & g1_lcm::kActionFlagEmergencyStop) != 0;
+      packet_sequence = packet.sequence;
     } else {
       ++bad_packet_count_;
       if (bad_packet_count_ <= 5 || bad_packet_count_ % 100 == 0) {
         std::cerr << "[lcm-action] Bad packet size count=" << bad_packet_count_.load()
                   << " size=" << buffer->data_size
                   << " expected_v1=" << sizeof(g1_lcm::PolicyActionPacketV1)
-                  << " expected_v2=" << sizeof(g1_lcm::PolicyActionPacketV2) << '\n';
+                  << " expected_v2=" << sizeof(g1_lcm::PolicyActionPacketV2)
+                  << " expected_v3=" << sizeof(g1_lcm::PolicyActionPacketV3) << '\n';
       }
       return;
+    }
+
+    if (packet_sequence == last_sequence_ && last_sequence_ != 0) {
+      ++bad_packet_count_;
+      if (bad_packet_count_ <= 5 || bad_packet_count_ % 100 == 0) {
+        std::cerr << "[lcm-action] Duplicate sequence rejected: last=" << last_sequence_
+                  << " current=" << packet_sequence << '\n';
+      }
+      return;
+    }
+    if (packet_sequence < last_sequence_ && last_sequence_ != 0) {
+      std::cerr << "[lcm-action] Sequence reset/jump back: last=" << last_sequence_
+                << " current=" << packet_sequence << " (accepted)\n";
     }
 
     {
